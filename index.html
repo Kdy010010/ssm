@@ -67,6 +67,33 @@ canvas{display:block;width:100%;height:min(58vh,600px);border-radius:12px;border
   padding:4px 6px;cursor:pointer;min-width:80px;flex:1;}
 .card:hover{border-color:rgba(74,242,197,.55);}.card.sel{border-color:var(--accent);box-shadow:0 0 8px rgba(74,242,197,.3);}
 .cName{font-size:10px;font-weight:700;}.cCost{font-size:9px;color:var(--accent);}.cInfo{font-size:9px;color:var(--sub);}
+
+/* CHAT */
+#chatBox{background:var(--panel);border:1px solid rgba(80,110,255,.35);border-radius:10px;
+  padding:6px 8px;display:flex;flex-direction:column;gap:5px;width:100%;}
+#chatLog{height:90px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;font-size:11px;}
+#chatLog::-webkit-scrollbar{width:3px;}
+#chatLog::-webkit-scrollbar-thumb{background:rgba(110,144,255,.4);border-radius:999px;}
+.chatMsg{padding:1px 0;}
+.chatMsg.me{color:#4af2c5;}.chatMsg.opp{color:#ff8fa8;}.chatMsg.sys{color:var(--sub);font-style:italic;}
+.chatRow{display:flex;gap:5px;}
+#chatInput{flex:1;background:rgba(8,12,34,.9);border:1px solid rgba(110,144,255,.4);border-radius:8px;
+  padding:5px 9px;color:var(--text);font-size:11px;outline:none;}
+#chatInput:focus{border-color:var(--accent);}
+#chatSend{background:rgba(74,242,197,.15);border:1px solid rgba(74,242,197,.4);border-radius:8px;
+  padding:5px 10px;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;}
+#chatSend:hover{background:rgba(74,242,197,.25);}
+
+/* REMATCH OVERLAY */
+#rematchOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);
+  align-items:center;justify-content:center;z-index:999;flex-direction:column;gap:16px;}
+#rematchOverlay.show{display:flex;}
+.rematchBox{background:rgba(10,14,40,.97);border:1px solid rgba(80,110,255,.6);border-radius:18px;
+  padding:28px 36px;text-align:center;display:flex;flex-direction:column;gap:14px;min-width:300px;}
+.rematchTitle{font-size:26px;font-weight:900;}
+.rematchSub{font-size:12px;color:var(--sub);}
+.rematchBtns{display:flex;gap:10px;justify-content:center;}
+.rematchVote{font-size:11px;color:var(--sub);margin-top:4px;}
 </style>
 </head>
 <body>
@@ -127,13 +154,34 @@ canvas{display:block;width:100%;height:min(58vh,600px);border-radius:12px;border
 
   <div class="bottomRow">
     <div class="section">
-      <div class="secTitle">🛡️ 타워 선택 (1~9키) — 내 절반 진영에만 설치</div>
-      <div class="cards" id="towerBar"></div>
+      <div class="secTitle">🛡️ 타워 선택 (1~9키) — 내 절반 진영에만 설치</div>      <div class="cards" id="towerBar"></div>
     </div>
     <div class="section">
       <div class="secTitle">⚔️ 유닛 소환 (ZXCVBNM키 또는 클릭) — 언제든 소환 가능!</div>
       <div class="cards" id="unitBar"></div>
     </div>
+  </div>
+
+  <!-- 채팅 -->
+  <div id="chatBox">
+    <div id="chatLog"></div>
+    <div class="chatRow">
+      <input id="chatInput" type="text" placeholder="메시지 입력 (Enter)" maxlength="100"/>
+      <button id="chatSend">전송</button>
+    </div>
+  </div>
+</div>
+
+<!-- 재대결 투표 오버레이 -->
+<div id="rematchOverlay">
+  <div class="rematchBox">
+    <div class="rematchTitle" id="rematchTitle">🏆 VICTORY</div>
+    <div class="rematchSub" id="rematchSub">다음 판을 플레이하시겠습니까?</div>
+    <div class="rematchBtns">
+      <button class="btn" id="voteYesBtn">✅ 재대결</button>
+      <button class="btn sec" id="voteNoBtn">❌ 종료</button>
+    </div>
+    <div class="rematchVote" id="rematchVote"></div>
   </div>
 </div>
 
@@ -182,7 +230,7 @@ const UNIT_TYPES = [
 ];
 
 const MAP_PATH=[[0,10],[5,10],[5,4],[12,4],[12,16],[18,16],[18,8],[22,8],[22,16],[28,16],[28,4],[35,4],[35,10],[39,10]];
-const TILE=40,COLS=40,ROWS=20,CORE_HP=3000,ENERGY_MAX=2000,ENERGY_INC=8;
+const TILE=40,COLS=40,ROWS=20,CORE_HP=3000,ENERGY_MAX=20000,ENERGY_INC=8;
 
 // ── PEER ──────────────────────────────────────
 let peer=null,conn=null,myRole="blue",myPeerId="";
@@ -204,7 +252,12 @@ function connectToPeer(){
 function setupConn(){
   conn.on("open",()=>{$ls.textContent="연결됨!";if(myRole==="blue")setTimeout(startGame,600);});
   conn.on("data",handleNet);
-  conn.on("close",()=>{setStatus("상대방 연결 끊김","bad");document.getElementById("connBadge").className="connBadge bad";document.getElementById("connBadge").textContent="● DISCONNECTED";});
+  conn.on("close",()=>{
+    setStatus("상대방 연결 끊김","bad");
+    document.getElementById("connBadge").className="connBadge bad";
+    document.getElementById("connBadge").textContent="● DISCONNECTED";
+    addChatMsg("상대방과의 연결이 끊겼습니다.","sys");
+  });
 }
 function send(msg){if(conn&&conn.open)conn.send(msg);}
 function copyId(){navigator.clipboard.writeText(myPeerId).catch(()=>{});$ls.textContent="복사됨!";}
@@ -249,6 +302,7 @@ function startGame(){
   myTowers=[];myUnits=[];myBullets=[];myPulses=[];
   oppTowers=[];oppUnits=[];
   gameOver=false;winner="";tick=0;_uid=1;startTime=Date.now();
+  document.getElementById("rematchOverlay").classList.remove("show");
   resizeCanvas();initStars();buildTowerBar();buildUnitBar();
   setMode("tower");setStatus("타워 배치 후 유닛을 소환하세요! ⚡ 자동 충전됩니다.","good");
   if(animId)cancelAnimationFrame(animId);
@@ -267,20 +321,74 @@ function handleNet(msg){
     case"unitDied":{const i=oppUnits.findIndex(u=>u.id===msg.id);if(i>=0){addP(oppUnits[i].x,oppUnits[i].y,55,"synergy");oppUnits.splice(i,1);}}break;
     case"gameOver":endGame(msg.w==="me"?"opp":"me");break;
     case"restart":startGame();break;
+    case"chat":addChatMsg(msg.text,"opp");break;
+    case"voteRematch":handleOppVote(msg.vote);break;
+
+    // 상대가 내 유닛/타워/코어를 공격 → 내가 권위자로 처리
+    case"unitHit": handleIncomingHit(msg); break;
+    case"unitKillReward":myEnergy=Math.min(ENERGY_MAX,myEnergy+msg.reward);break;
+    case"oppUnitHp":{const e=oppUnits.find(u=>u.id===msg.id);if(e)e.hp=msg.hp;}break;
+    case"oppUnitDead":{
+      const i=oppUnits.findIndex(u=>u.id===msg.id);
+      if(i>=0){addP(oppUnits[i].x,oppUnits[i].y,55,"synergy");oppUnits.splice(i,1);}
+    }break;
+    case"oppTowerHp":{const tw=oppTowers.find(t=>t.id===msg.id);if(tw)tw.hp=msg.hp;}break;
   }
   refreshUI();
 }
 
 function recvOppUnit(ud){
   const pts=oppPP();
-  oppUnits.push({...ud,x:pts[0].x,y:pts[0].y,pathIndex:0,progress:0,pathPts:pts,
-    slowFactor:1,slowTimer:0,atkCooldown:0,coreCooldown:0,
-    laserStack:0,laserTKind:"",laserTId:null});
+  const base=UNIT_TYPES.find(u=>u.id===ud.typeId)||{};
+  oppUnits.push({
+    ...base, ...ud,
+    x:pts[0].x+(Math.random()*16-8),
+    y:pts[0].y+(Math.random()*16-8),
+    pathIndex:0, progress:0, pathPts:pts,
+    hp:ud.hp||base.hp, maxHp:ud.maxHp||base.hp,
+    slowFactor:1, slowTimer:0,
+    atkCooldown:0, coreCooldown:0,
+    coreStrikesLeft:ud.coreStrikesLeft||ud.coreStrikes||base.coreStrikes||6,
+    laserStack:0, laserTKind:"", laserTId:null,
+    poisonTimer:0
+  });
 }
 function recvOppTower(td){
   oppTowers.push({...td});
   const tx=~~(td.x/TILE),ty=~~(td.y/TILE);if(ins(tx,ty))grid[ty][tx].hasOT=true;
 }
+
+// 상대가 내 유닛/타워를 공격 → 내가 권위자로 HP 처리 후 결과 전송
+function handleIncomingHit(msg){
+  if(msg.targetKind==="unit"){
+    const u=myUnits.find(u=>u.id===msg.targetId);
+    if(!u)return;
+    u.hp-=msg.damage;
+    if(msg.slowDuration)applySlow(u,msg.slowFactor,msg.slowDuration);
+    if(msg.poisonDuration){u.poisonTimer=msg.poisonDuration;u.poisonDps=msg.poisonDps||0;}
+    addP(u.x,u.y,35,"redPulse");
+    if(u.hp<=0){
+      myUnits.splice(myUnits.indexOf(u),1);
+      send({type:"unitKillReward",reward:Math.max(5,~~(u.maxHp*.015))});
+      send({type:"oppUnitDead",id:u.id}); // 상대 화면 oppUnits에서 제거
+    } else {
+      send({type:"oppUnitHp",id:u.id,hp:u.hp}); // 상대 화면 HP 동기화
+    }
+  } else if(msg.targetKind==="tower"){
+    const tw=myTowers.find(t=>t.id===msg.targetId);
+    if(!tw)return;
+    tw.hp-=msg.damage;
+    addP(tw.x,tw.y,40,"redPulse");
+    if(tw.hp<=0)killMyTower(tw);
+    else send({type:"oppTowerHp",id:tw.id,hp:tw.hp});
+  } else if(msg.targetKind==="core"){
+    myCorHp=Math.max(0,myCorHp-msg.damage);
+    addP(myCorePt.x,myCorePt.y,130,"coreHit");
+    send({type:"coreHit",hp:myCorHp});
+    if(myCorHp<=0)endGame("opp");
+  }
+}
+function applySlow(e,sf,sd){if(!sd||sf>=1)return;if(sf<(e.slowFactor||1)){e.slowFactor=sf;e.slowTimer=Math.max(e.slowTimer||0,sd);}}
 
 // ── PLACE TOWER ──────────────────────────────
 function canPlace(tx,ty){
@@ -310,22 +418,22 @@ function placeTower(tx,ty){
 function spawnUnit(){
   const U=UNIT_TYPES[selU];
   if(myEnergy<U.cost){setStatus("에너지 부족!","bad");return;}
-  const pts=myPP();const pi=0;const p=pts[pi]; // [0] = 내 기지
-  const u={id:nid(),typeId:U.id,name:U.name,
-    x:p.x+(Math.random()*16-8),y:p.y+(Math.random()*16-8),
-    hp:U.hp,maxHp:U.hp,speed:U.speed,range:U.range,
-    atkRate:U.atkRate,damage:U.damage,mode:U.mode,
-    bulletSpeed:U.bulletSpeed||11,splashRadius:U.splashRadius||0,
-    healAmount:U.healAmount||0,empSlow:U.empSlow||0.55,empDur:U.empDur||0,
-    laserGrow:U.laserGrow||0.22,laserMax:U.laserMax||28,
-    coreStrikes:U.coreStrikes||6,
-    pathIndex:pi,progress:0,pathPts:pts,
-    atkCooldown:0,slowFactor:1,slowTimer:0,
-    coreStrikesLeft:U.coreStrikes||6,coreCooldown:0,
-    laserStack:0,laserTKind:"",laserTId:null};
+  const pts=myPP();const pi=0;const p=pts[pi];
+  // UNIT_TYPES의 모든 필드를 그대로 복사 (특수 필드 누락 방지)
+  const u={
+    ...U,                          // shieldHp, shieldMax, laserGrow 등 모든 필드
+    id:nid(), typeId:U.id,
+    x:p.x+(Math.random()*16-8), y:p.y+(Math.random()*16-8),
+    hp:U.hp, maxHp:U.hp,
+    pathIndex:pi, progress:0, pathPts:pts,
+    atkCooldown:0, slowFactor:1, slowTimer:0,
+    coreStrikesLeft:U.coreStrikes||6, coreCooldown:0,
+    laserStack:0, laserTKind:"", laserTId:null,
+    poisonTimer:0
+  };
   myUnits.push(u);myEnergy-=U.cost;
   setStatus(`${U.name} 소환!`,"good");
-  // 상대에게 알림 (경로 정보 제외하고 전송)
+  // 상대에게 전송 (경로/위치 제외)
   const net={...u};delete net.pathPts;delete net.x;delete net.y;
   send({type:"spawnUnit",u:net});refreshUI();
 }
@@ -336,14 +444,15 @@ function update(){
   tick++;
   if(tick%60===0){myEnergy=Math.min(ENERGY_MAX,myEnergy+ENERGY_INC);}
   updateMyUnits();
-  updateOppUnits();
-  updateTowers();
+  updateOppUnits_visOnly(); // 상대 유닛: 이동+시각만, HP는 상대가 권위자
+  updateMyTowers();
   updateBullets();
   updatePulses();
   if(tick%90===0)send({type:"sync",e:myEnergy,c:myCorHp});
   refreshUI();
 }
 
+// ── 내 유닛 (내가 권위자) ──────────────────────
 function updateMyUnits(){
   for(let i=myUnits.length-1;i>=0;i--){
     const a=myUnits[i];
@@ -353,53 +462,50 @@ function updateMyUnits(){
     if(a.coreCooldown>0)a.coreCooldown--;
 
     if(a.mode==="heal"){
-      if(a.atkCooldown<=0){for(const o of myUnits)if(o!==a&&dist(a,o)<=a.range)o.hp=Math.min(o.maxHp,o.hp+a.healAmount);addP(a.x,a.y,a.range*.65,"towerHeal");a.atkCooldown=a.atkRate;}
+      if(a.atkCooldown<=0){
+        for(const o of myUnits)if(o!==a&&dist(a,o)<=a.range)o.hp=Math.min(o.maxHp,o.hp+a.healAmount);
+        addP(a.x,a.y,a.range*.65,"towerHeal");a.atkCooldown=a.atkRate;
+      }
     } else if(a.atkCooldown<=0){
       let tgt=null,tk="",best=Infinity;
       for(const e of oppUnits){const d=dist(a,e);if(d<a.range&&d<best){best=d;tgt=e;tk="unit";}}
       if(!tgt)for(const tw of oppTowers){const d=dist(a,tw);if(d<a.range&&d<best){best=d;tgt=tw;tk="tower";}}
       const hc=!tgt&&dist(a,oppCorePt)<=a.range;
-      if(tgt){doShoot(a,tgt,tk);a.atkCooldown=a.atkRate;}
-      else if(hc){doCore(a);}
+      if(tgt){
+        // 상대 유닛/타워 피격 → 상대에게 전송해서 상대가 HP 처리
+        send({type:"unitHit", targetKind:tk, targetId:tgt.id,
+              damage:a.damage, mode:a.mode,
+              slowFactor:a.empSlow||1, slowDuration:a.empDur||0,
+              splashRadius:a.splashRadius||0, srcX:a.x, srcY:a.y});
+        // 시각 효과만 로컬에서
+        addP(tgt.x,tgt.y,40,"melee");
+        a.atkCooldown=a.atkRate;
+      } else if(hc){
+        doCore(a);
+      }
     }
-    // 상대 코어에 도달했는지 확인 (pathPts 끝에 도달)
     const pts=a.pathPts;const npi=a.pathIndex+1;
-    if(!pts[npi]){
-      // 코어 근처 도달 → 코어 공격
-      doCore(a);continue;
-    }
-    // 타겟 없으면 전진 (+1 방향: 기지→상대코어)
+    if(!pts[npi]){doCore(a);continue;}
     let hasTgt=false;
     for(const e of oppUnits){if(dist(a,e)<=a.range){hasTgt=true;break;}}
     if(!hasTgt)for(const tw of oppTowers){if(dist(a,tw)<=a.range){hasTgt=true;break;}}
-    if(!hasTgt&&dist(a,oppCorePt)>a.range) moveUnit(a,+1);
+    if(!hasTgt&&dist(a,oppCorePt)>a.range)moveUnit(a,+1);
   }
 }
 
-function updateOppUnits(){
+// ── 상대 유닛 (상대가 권위자 — 이동+렌더만) ──
+function updateOppUnits_visOnly(){
   for(let i=oppUnits.length-1;i>=0;i--){
     const e=oppUnits[i];
     if(e.hp<=0){
-      myEnergy=Math.min(ENERGY_MAX,myEnergy+Math.max(5,~~(e.maxHp*.015)));
-      addP(e.x,e.y,55,"synergy");send({type:"unitDied",id:e.id});oppUnits.splice(i,1);continue;
+      addP(e.x,e.y,55,"synergy");oppUnits.splice(i,1);continue;
     }
     if(e.slowTimer>0){e.slowTimer--;if(e.slowTimer<=0)e.slowFactor=1;}
-    if(e.atkCooldown>0)e.atkCooldown--;
-    if(e.atkCooldown<=0){
-      let tgt=null,tk="",best=Infinity;
-      for(const u of myUnits){const d=dist(e,u);if(d<e.range&&d<best){best=d;tgt=u;tk="unit";}}
-      if(!tgt)for(const tw of myTowers){const d=dist(e,tw);if(d<e.range&&d<best){best=d;tgt=tw;tk="mytower";}}
-      if(tgt){
-        if(tk==="unit")tgt.hp-=e.damage;
-        else{tgt.hp-=e.damage;if(tgt.hp<=0)killMyTower(tgt);}
-        addP(tgt.x,tgt.y,40,"redPulse");e.atkCooldown=e.atkRate;
-      }
-    }
-    // 내 코어 도달
+    // 이동만 처리 (공격/사망 판정은 상대가 권위자)
     const pts=e.pathPts;const npi=e.pathIndex+1;
     if(!pts[npi]){
-      myCorHp=Math.max(0,myCorHp-30);addP(myCorePt.x,myCorePt.y,130,"coreHit");
-      send({type:"coreHit",hp:myCorHp});oppUnits.splice(i,1);if(myCorHp<=0)endGame("opp");continue;
+      // 내 코어 도달 — 상대가 coreHit 보낼 것이므로 여기서는 제거만
+      oppUnits.splice(i,1);continue;
     }
     let hasTgt=false;
     for(const u of myUnits){if(dist(e,u)<=e.range){hasTgt=true;break;}}
@@ -408,7 +514,8 @@ function updateOppUnits(){
   }
 }
 
-function updateTowers(){
+// ── 내 타워 (공격은 상대에게 전송) ──────────────
+function updateMyTowers(){
   for(const t of myTowers){
     if(t.cooldown>0)t.cooldown--;
     t.spin=(t.spin||0)+.05;
@@ -423,20 +530,30 @@ function updateTowers(){
     if(t.mode==="pulse"){
       if(t.cooldown<=0&&(tgt||hc)){
         const r=t.range*.88;
-        for(const e of oppUnits)if(dist(t,e)<=r)e.hp-=t.damage;
-        for(const tw of oppTowers)if(dist(t,tw)<=r)tw.hp-=t.damage;
+        // 범위 내 상대 유닛/타워 → 상대에게 전송
+        for(const e of oppUnits)if(dist(t,e)<=r)
+          send({type:"unitHit",targetKind:"unit",targetId:e.id,damage:t.damage,mode:"pulse",
+                slowFactor:1,slowDuration:0,splashRadius:0,srcX:t.x,srcY:t.y});
+        for(const tw of oppTowers)if(dist(t,tw)<=r)
+          send({type:"unitHit",targetKind:"tower",targetId:tw.id,damage:t.damage,mode:"pulse",
+                slowFactor:1,slowDuration:0,splashRadius:0,srcX:t.x,srcY:t.y});
         if(hc){oppCorHp=Math.max(0,oppCorHp-~~(t.damage*.65));send({type:"coreHit",hp:oppCorHp});if(oppCorHp<=0)endGame("me");}
         addP(t.x,t.y,r,"pulse");t.cooldown=t.fireRate;
       }
     } else if(t.cooldown<=0&&(tgt||hc)){
-      myBullets.push({x:t.x,y:t.y,targetKind:tgt?tk:"core",targetId:tgt?tgt.id:0,
+      // 투사체 — 착탄 시 상대에게 알림
+      myBullets.push({
+        x:t.x,y:t.y,targetKind:tgt?tk:"core",targetId:tgt?tgt.id:0,
         tx:tgt?tgt.x:oppCorePt.x,ty:tgt?tgt.y:oppCorePt.y,
         speed:t.bulletSpeed,damage:t.damage,splashRadius:t.splashRadius,
         slowFactor:t.slowFactor,slowDuration:t.slowDuration,
-        poisonDps:t.poisonDps,poisonDuration:t.poisonDuration,towerType:t.typeId});
+        poisonDps:t.poisonDps,poisonDuration:t.poisonDuration,towerType:t.typeId,
+        isTower:true
+      });
       t.cooldown=t.fireRate;
     }
   }
+  // opp 타워 HP 0 → 제거 (상대가 removeTower 보낼 것이므로 로컬에선 hp 감소만 받아서 처리됨)
   for(let i=oppTowers.length-1;i>=0;i--){
     if(oppTowers[i].hp<=0){
       const tw=oppTowers[i];const tx=~~(tw.x/TILE),ty=~~(tw.y/TILE);
@@ -464,29 +581,47 @@ function hitBullet(b){
     oppCorHp=Math.max(0,oppCorHp-d);addP(oppCorePt.x,oppCorePt.y,80,"coreHit");
     send({type:"coreHit",hp:oppCorHp});if(oppCorHp<=0)endGame("me");return;
   }
+  addP(b.x,b.y,sp>0?sp*.5:30,"melee");
   if(sp>0){
-    for(const e of oppUnits)if(dist(hp,e)<=sp)dmgOppU(e,b.damage,b);
-    for(const tw of oppTowers)if(dist(hp,tw)<=sp)tw.hp-=b.damage;
-    if(dist(hp,oppCorePt)<=sp){oppCorHp=Math.max(0,oppCorHp-~~(b.damage*.5));send({type:"coreHit",hp:oppCorHp});if(oppCorHp<=0)endGame("me");}
+    for(const e of oppUnits)if(dist(hp,e)<=sp)
+      send({type:"unitHit",targetKind:"unit",targetId:e.id,damage:b.damage,
+            slowFactor:b.slowFactor||1,slowDuration:b.slowDuration||0,
+            poisonDps:b.poisonDps||0,poisonDuration:b.poisonDuration||0});
+    for(const tw of oppTowers)if(dist(hp,tw)<=sp)
+      send({type:"unitHit",targetKind:"tower",targetId:tw.id,damage:b.damage,
+            slowFactor:1,slowDuration:0,poisonDps:0,poisonDuration:0});
+    if(dist(hp,oppCorePt)<=sp){
+      const d=~~(b.damage*.5);oppCorHp=Math.max(0,oppCorHp-d);
+      send({type:"coreHit",hp:oppCorHp});if(oppCorHp<=0)endGame("me");
+    }
   } else {
-    if(b.targetKind==="unit"){const e=oppUnits.find(u=>u.id===b.targetId);if(e)dmgOppU(e,b.damage,b);}
-    else if(b.targetKind==="tower"){const tw=oppTowers.find(t=>t.id===b.targetId);if(tw)tw.hp-=b.damage;}
+    if(b.targetKind==="unit")
+      send({type:"unitHit",targetKind:"unit",targetId:b.targetId,damage:b.damage,
+            slowFactor:b.slowFactor||1,slowDuration:b.slowDuration||0,
+            poisonDps:b.poisonDps||0,poisonDuration:b.poisonDuration||0});
+    else if(b.targetKind==="tower")
+      send({type:"unitHit",targetKind:"tower",targetId:b.targetId,damage:b.damage,
+            slowFactor:1,slowDuration:0,poisonDps:0,poisonDuration:0});
   }
 }
-function dmgOppU(e,d,b){e.hp-=d;if(b?.slowDuration)applySlow(e,b.slowFactor,b.slowDuration);if(b?.poisonDuration){e.poisonTimer=b.poisonDuration;e.poisonDps=b.poisonDps;}}
-function applySlow(e,sf,sd){if(!sd||sf>=1)return;if(sf<(e.slowFactor||1)){e.slowFactor=sf;e.slowTimer=Math.max(e.slowTimer||0,sd);}}
 
 function doShoot(a,tgt,tk){
-  if(a.mode==="melee"){tgt.hp-=a.damage;addP(tgt.x,tgt.y,50,"melee");}
-  else if(a.mode==="laser"){
+  // 모든 공격은 상대에게 unitHit 전송 — 로컬에서 직접 HP 수정 안 함
+  if(a.mode==="melee"){
+    send({type:"unitHit",targetKind:tk,targetId:tgt.id,damage:a.damage,
+          slowFactor:1,slowDuration:0,poisonDps:0,poisonDuration:0});
+    addP(tgt.x,tgt.y,50,"melee");
+  } else if(a.mode==="laser"){
     const same=(a.laserTKind===tk&&a.laserTId===tgt.id);
     if(!same){a.laserTKind=tk;a.laserTId=tgt.id;a.laserStack=0;}
     a.laserStack=Math.min(a.laserMax,a.laserStack+a.laserGrow*10);
-    tgt.hp-=(a.damage+a.laserStack);addP(a.x,a.y,a.range*.55,"laser");
+    send({type:"unitHit",targetKind:tk,targetId:tgt.id,damage:a.damage+a.laserStack,
+          slowFactor:1,slowDuration:0,poisonDps:0,poisonDuration:0});
+    addP(a.x,a.y,a.range*.55,"laser");
   } else {
     myBullets.push({x:a.x,y:a.y,targetKind:tk,targetId:tgt.id,
       tx:tgt.x,ty:tgt.y,speed:a.bulletSpeed,damage:a.damage,
-      splashRadius:a.splashRadius,slowFactor:a.empSlow||1,slowDuration:a.empDur||0,
+      splashRadius:a.splashRadius||0,slowFactor:a.empSlow||1,slowDuration:a.empDur||0,
       poisonDps:0,poisonDuration:0});
   }
 }
@@ -533,9 +668,95 @@ function addP(x,y,maxR,kind){myPulses.push({x,y,r:0,maxR,alpha:.72,kind});}
 function updatePulses(){for(let i=myPulses.length-1;i>=0;i--){const p=myPulses[i];p.r+=5.5;p.alpha-=.032;if(p.alpha<=0||p.r>p.maxR)myPulses.splice(i,1);}}
 
 function endGame(who){
-  if(gameOver)return;gameOver=true;winner=who;
-  if(who==="me"){setStatus("🏆 승리! 상대 코어 파괴!","good");send({type:"gameOver",w:"opp"});}
-  else{setStatus("💀 패배! 내 코어가 파괴되었습니다.","bad");send({type:"gameOver",w:"me"});}
+  if(gameOver)return;
+  gameOver=true;winner=who;
+  if(who==="me"){
+    setStatus("🏆 승리! 상대 코어 파괴!","good");
+    send({type:"gameOver",w:"opp"});
+  } else {
+    setStatus("💀 패배! 내 코어가 파괴되었습니다.","bad");
+    send({type:"gameOver",w:"me"});
+  }
+  showRematchOverlay(who);
+}
+
+// ── 재대결 투표 ──────────────────────────────
+let myVote=null, oppVote=null;
+
+function showRematchOverlay(who){
+  myVote=null; oppVote=null;
+  const ov=document.getElementById("rematchOverlay");
+  document.getElementById("rematchTitle").textContent=who==="me"?"🏆 VICTORY":"💀 DEFEAT";
+  document.getElementById("rematchTitle").style.color=who==="me"?"#4af2c5":"#ff4b81";
+  document.getElementById("rematchSub").textContent="다음 판을 플레이하시겠습니까?";
+  document.getElementById("rematchVote").textContent="";
+  document.getElementById("voteYesBtn").disabled=false;
+  document.getElementById("voteNoBtn").disabled=false;
+  ov.classList.add("show");
+  addChatMsg(`게임 종료! ${who==="me"?"내가 승리":"상대가 승리"}했습니다.`,"sys");
+}
+
+function castVote(v){
+  if(myVote!==null)return;
+  myVote=v;
+  document.getElementById("voteYesBtn").disabled=true;
+  document.getElementById("voteNoBtn").disabled=true;
+  updateVoteUI();
+  send({type:"voteRematch",vote:v});
+  checkBothVoted();
+}
+
+function handleOppVote(v){
+  oppVote=v;
+  updateVoteUI();
+  checkBothVoted();
+}
+
+function updateVoteUI(){
+  const me=myVote===null?"대기 중":myVote?"✅ 재대결":"❌ 종료";
+  const opp=oppVote===null?"대기 중":oppVote?"✅ 재대결":"❌ 종료";
+  document.getElementById("rematchVote").textContent=`나: ${me}  |  상대: ${opp}`;
+}
+
+function checkBothVoted(){
+  if(myVote===null||oppVote===null)return;
+  if(myVote&&oppVote){
+    document.getElementById("rematchSub").textContent="양쪽 모두 동의! 재대결 시작...";
+    setTimeout(()=>{
+      document.getElementById("rematchOverlay").classList.remove("show");
+      if(animId)cancelAnimationFrame(animId);
+      startGame();
+      send({type:"restart"});
+    },1200);
+  } else {
+    document.getElementById("rematchSub").textContent=
+      (!myVote&&!oppVote)?"양쪽 모두 거절. 게임 종료.":
+      (!myVote)?"내가 거절했습니다.":"상대방이 거절했습니다.";
+    addChatMsg(myVote&&!oppVote?"상대방이 재대결을 거절했습니다.":
+               !myVote&&oppVote?"내가 재대결을 거절했습니다.":
+               "양쪽 모두 종료를 선택했습니다.","sys");
+  }
+}
+
+// ── 채팅 ──────────────────────────────────────
+function addChatMsg(text, who){
+  const log=document.getElementById("chatLog");
+  const d=document.createElement("div");
+  d.className=`chatMsg ${who}`;
+  const label=who==="me"?(myRole==="blue"?"🔵 나":"🔴 나"):
+               who==="opp"?(myRole==="blue"?"🔴 상대":"🔵 상대"):"💬";
+  d.textContent=`${label}: ${text}`;
+  log.appendChild(d);
+  log.scrollTop=log.scrollHeight;
+}
+
+function sendChat(){
+  const inp=document.getElementById("chatInput");
+  const txt=inp.value.trim();
+  if(!txt)return;
+  addChatMsg(txt,"me");
+  send({type:"chat",text:txt});
+  inp.value="";
 }
 
 // ── RENDER ──────────────────────────────────────
@@ -897,6 +1118,8 @@ canvas.addEventListener("touchmove",e=>{if(e.touches.length===1&&isPan){const t=
 canvas.addEventListener("touchend",e=>{if(!dragging&&e.changedTouches.length>0){const t=e.changedTouches[0];const{tx,ty}=toTile(t.clientX,t.clientY);if(mode==="tower")placeTower(tx,ty);else spawnUnit();}isPan=false;lastT2=null;dragging=false;e.preventDefault();},{passive:false});
 
 document.addEventListener("keydown",e=>{
+  // 채팅창 포커스 중엔 게임 단축키 무시
+  if(document.activeElement===document.getElementById("chatInput"))return;
   if(e.key==="r"||e.key==="R"){resetGame();return;}
   if(e.key===" "){setMode(mode==="tower"?"unit":"tower");e.preventDefault();return;}
   if(e.key>="1"&&e.key<="9"){const i=parseInt(e.key,10)-1;if(i<TOWER_TYPES.length){selT=i;buildTowerBar();setMode("tower");setStatus(`타워: ${TOWER_TYPES[i].name}`,"good");}return;}
@@ -907,6 +1130,16 @@ document.getElementById("modeTowerBtn").onclick=()=>setMode("tower");
 document.getElementById("modeUnitBtn").onclick=()=>{setMode("unit");};
 document.getElementById("spawnBtn").onclick=()=>{setMode("unit");spawnUnit();};
 document.getElementById("restartBtn").onclick=()=>resetGame();
+
+// 채팅
+document.getElementById("chatSend").onclick=()=>sendChat();
+document.getElementById("chatInput").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();sendChat();}
+});
+
+// 재대결 투표
+document.getElementById("voteYesBtn").onclick=()=>castVote(true);
+document.getElementById("voteNoBtn").onclick=()=>castVote(false);
 
 initPeer();
 </script>
